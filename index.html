@@ -54,7 +54,7 @@
     <div class="valid-results-header">
       <div>
         <h2 id="valid-results-heading" tabindex="-1">Your assessment plan</h2>
-        <p>A design brief to adapt, not a finished policy. Open any section below for the details.</p>
+        <p>A design brief to adapt, not a finished policy. Select <strong>Edit</strong> on any step to change it here, or open a section for the details.</p>
       </div>
       <div class="viz-row">
         <button class="btn" id="valid-edit-answers" type="button">Edit answers</button>
@@ -131,6 +131,31 @@
         </div>
         <p class="text-small text-muted" id="valid-rubric-intro"></p>
         <div id="valid-rubric-output"></div>
+
+        <section class="valid-export" aria-labelledby="valid-export-heading">
+          <h4 id="valid-export-heading">Export to Canvas</h4>
+          <p class="text-small text-muted">Downloads a CSV in the format Canvas uses to import rubrics. It includes the descriptors shown above, with points split 4-3-2-1 across the levels.</p>
+          <p class="text-small valid-note" id="valid-export-format-note" hidden>Canvas rubrics are criterion-by-level grids, so the file contains the analytic version of this rubric.</p>
+          <div class="valid-export-fields">
+            <label class="form-label text-small" for="valid-rubric-name">Rubric name
+              <input class="form-control" id="valid-rubric-name" type="text" maxlength="120" autocomplete="off">
+            </label>
+            <label class="form-label text-small valid-export-points" for="valid-rubric-points">Total points
+              <input class="form-control" id="valid-rubric-points" type="number" min="1" max="1000" step="1" inputmode="numeric">
+            </label>
+            <button class="btn btn-primary" id="valid-export-canvas" type="button">Download Canvas CSV</button>
+          </div>
+          <p class="text-small text-muted" id="valid-export-status" aria-live="polite"></p>
+          <details class="valid-evidence-note text-small">
+            <summary>How to import it into Canvas</summary>
+            <ol>
+              <li>In your course, open <strong>Rubrics</strong> and select <strong>Import Rubric</strong> (Enhanced Rubrics).</li>
+              <li>Upload the CSV. Don't open and re-save it in Excel first, which can change the formatting.</li>
+              <li>Imported rubrics arrive as drafts. Open the rubric, check it, and select <strong>Save Rubric</strong>.</li>
+              <li>Set the rating order and scoring options there; the file can't set them. Then attach the rubric to the assignment with <strong>Find Rubric</strong>.</li>
+            </ol>
+          </details>
+        </section>
       </div>
     </details>
 

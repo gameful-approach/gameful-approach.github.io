@@ -29,6 +29,22 @@ The pages are ES modules, which don't run from `file://`. To try the site on you
 
 Answers saved by the previous version still load.
 
+## Editing on the plan page
+
+Each step in the plan summary has an **Edit** button. It opens that step's questions in place; **Update plan** refreshes every section, and **Cancel** (or Escape) puts the answers back. **Edit answers** still opens the full step-by-step wizard.
+
+If you change wording after running the local AI, its sections stay and are labeled "Made before your latest edits." If a change alters the rubric's criteria (for example the evidence type or the role of AI), the AI sections are cleared, because the rewritten descriptors would no longer line up.
+
+## Export the rubric to Canvas
+
+The **Draft rubric** section has **Download Canvas CSV**. Set a rubric name and total points first (default 100). Points follow the criterion weights and split 4-3-2-1 across Exemplary, Proficient, Developing and Beginning. The file uses whatever descriptors are on screen, AI-personalized or template.
+
+The format follows Canvas's own rubric importer (`lib/rubric_csv_importer.rb` in canvas-lms): one row per criterion, grouped by `Rubric Name`, with repeating `Rating Name` / `Rating Description` / `Rating Points` columns. The file has no byte-order mark, because one would break the `Rubric Name` header.
+
+To import it: in the course, open **Rubrics** and select **Import Rubric**, then upload the file. Imported rubrics arrive as drafts, so open the rubric and select **Save Rubric**. The file can't set the rating order or scoring options; set those in Canvas. Then attach the rubric to the assignment with **Find Rubric**. Holistic, checklist and specifications layouts are exported as the analytic grid, since that's what Canvas rubrics are.
+
+This is the rubric import. The Canvas article on importing rubric *assessments* covers uploading students' scores, which is a different file.
+
 ## How the local AI works
 
 After you build a plan, the **Personalize with local AI** card offers two ways to run a model:
@@ -72,7 +88,7 @@ This works in Chrome, Edge, and Firefox. Safari may block a secure site from rea
 
 ## What was tested
 
-The site was run in headless Chromium with 88 automated checks:
+The site was run in headless Chromium with 113 automated checks:
 
 - the full wizard
 - the plan staying on screen
@@ -84,6 +100,8 @@ The site was run in headless Chromium with 88 automated checks:
 - an accessibility scan (axe-core, light and dark, with no violations)
 - phone width
 - print
+- editing on the plan page
+- the Canvas export, also parsed with Canvas's own importer code to confirm it reads the file
 
 The local AI was tested three ways:
 

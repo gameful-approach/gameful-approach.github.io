@@ -51,9 +51,16 @@ const defaultState = {
   grading: "analytic", verification: "defense", support: "", exampleContext: "art",
   ai: null,              // { signature, by, finishedAt, alignment, instructions, rubric }
   aiRubricHidden: false, // showing the template rubric instead of the AI version
-  aiCleared: false       // answers changed, so earlier AI output was discarded
+  aiCleared: false,      // answers changed, so earlier AI output was discarded
+  rubricName: "",        // Canvas export: blank means use the default name
+  rubricPoints: 100
 };
 const freshState = () => structuredClone(defaultState);
+
+function clampPoints(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.min(1000, Math.round(n * 100) / 100) : 100;
+}
 
 function cleanAI(saved) {
   if (!saved || typeof saved !== "object" || typeof saved.signature !== "string") return null;
@@ -65,7 +72,8 @@ function cleanAI(saved) {
     by: saved.by && typeof saved.by === "object"
       ? saved.by
       : { alignment: legacyModel, instructions: legacyModel, rubric: legacyModel },
-    finishedAt: Number(saved.finishedAt) || 0
+    finishedAt: Number(saved.finishedAt) || 0,
+    criteriaNames: list(saved.criteriaNames)
   };
   if (Array.isArray(saved.rubric) && saved.rubric.every((row) => Array.isArray(row) && row.length === 4 && row.every((d) => typeof d === "string"))) {
     out.rubric = saved.rubric;
@@ -110,6 +118,8 @@ function loadState() {
   s.recommendPending = Boolean(s.recommendPending);
   s.aiRubricHidden = Boolean(s.aiRubricHidden);
   s.aiCleared = Boolean(s.aiCleared);
+  s.rubricName = typeof s.rubricName === "string" ? s.rubricName.slice(0, 120) : "";
+  s.rubricPoints = clampPoints(s.rubricPoints);
   s.ai = cleanAI(s.ai);
   return s;
 }
@@ -546,8 +556,20 @@ function showResults() {
   initAI();
 }
 
+// AI output made before the latest edits. It's kept (and labeled) as long as the
+// rubric's criteria are unchanged; otherwise the descriptors wouldn't line up.
+function aiIsStale() {
+  return Boolean(state.ai) && state.ai.signature !== planSignature();
+}
+
+function staleNote() {
+  return aiIsStale() ? " Made before your latest edits." : "";
+}
+
 function renderResults() {
-  if (state.ai && state.ai.signature !== planSignature()) {
+  planEditing = null;
+  const sameCriteria = JSON.stringify(state.ai?.criteriaNames ?? []) === JSON.stringify(rubricCriteria().map((c) => c.name));
+  if (aiIsStale() && !sameCriteria) {
     ai.controller?.abort(); // a run in progress is for the old answers
     state.ai = null;
     state.aiCleared = true;
@@ -565,9 +587,15 @@ function renderResults() {
     ["Assign", `${labels.aiRole[state.aiRole]} · ${labels.aiasLevel[level]}; submit ${labels.disclosure[state.disclosure]}. ${filled(state.allowed, "Detailed AI-use rules not yet specified.")}`],
     ["Implement", `${labels.grading[state.grading]} with ${labels.verification[state.verification]}. ${filled(state.support, "Implementation support not yet specified.")}`]
   ];
-  $("#valid-plan-summary").innerHTML = planItems.map(([name, text], index) =>
-    `<li style="${stepStyle(index)}"><span class="valid-plan-letter" aria-hidden="true">${esc(steps[index].letter)}</span><strong>${esc(name)}</strong><span>${esc(text)}</span></li>`
-  ).join("");
+  $("#valid-plan-summary").innerHTML = planItems.map(([name, text], index) => `
+    <li style="${stepStyle(index)}" data-plan-step="${index}">
+      <span class="valid-plan-letter" aria-hidden="true">${esc(steps[index].letter)}</span>
+      <div class="valid-plan-head">
+        <strong>${esc(name)}</strong>
+        <button class="btn btn-ghost valid-plan-edit" type="button" data-edit-step="${index}" aria-expanded="false" aria-controls="valid-plan-editor-${index}">Edit<span class="sr-only"> ${esc(name)}</span></button>
+      </div>
+      <span class="valid-plan-text">${esc(text)}</span>
+    </li>`).join("");
 
   $("#valid-aias-label").textContent = `· ${labels.aiasLevel[level]}`;
   $("#valid-aias-summary").innerHTML = `
@@ -624,7 +652,7 @@ function renderRubric() {
   $("#valid-rubric-ai-tag").hidden = !showAI;
   $("#valid-rubric-toolbar").hidden = !aiRubric;
   $("#valid-rubric-ai-note").textContent = showAI
-    ? `Descriptors rewritten for your answers by ${state.ai.by?.rubric || "local AI"}. Criteria and weights are unchanged.`
+    ? `Descriptors rewritten for your answers by ${state.ai.by?.rubric || "local AI"}.${staleNote()} Criteria and weights are unchanged.`
     : "Showing the template descriptors. An AI-personalized version is available.";
   $("#valid-rubric-toggle").textContent = showAI ? "Show template version" : "Show AI version";
   $("#valid-rubric-intro").textContent = `This ${methodNames[state.grading]} is aligned to ${labels.outcome[state.outcome]}, ${labels.evidenceType[state.evidenceType]}, and ${labels.aiasLevel[level]}. It is a draft: review the criteria and weighting, then pilot and calibrate before high-stakes use.`;
@@ -645,6 +673,12 @@ function renderRubric() {
     rows = criteria.map((item, i) => `<tr><th scope="row">${esc(item.name)} <span class="text-small text-muted">(${item.weight}%)</span></th><td>${esc(descriptions(i)[1])}</td></tr>`).join("");
   }
 
+  const nameField = $("#valid-rubric-name");
+  if (document.activeElement !== nameField) nameField.value = state.rubricName;
+  nameField.placeholder = defaultRubricName();
+  const pointsField = $("#valid-rubric-points");
+  if (document.activeElement !== pointsField) pointsField.value = String(state.rubricPoints);
+  $("#valid-export-format-note").hidden = state.grading === "analytic";
   $("#valid-rubric-output").innerHTML = `
     <div class="valid-rubric-table-wrap" role="region" aria-label="Draft rubric table" tabindex="0">
       <table class="valid-rubric-table"><thead>${heading}</thead><tbody>${rows}</tbody></table>
@@ -662,6 +696,116 @@ function renderExample() {
       <dt>Evidence status</dt><dd>${esc(example.evidence)}</dd>
       <dt>Source</dt><dd><a href="${esc(example.url)}" target="_blank" rel="noopener noreferrer">Read the published source<span class="sr-only"> (opens in a new tab)</span></a></dd>
     </dl>`;
+}
+
+/* ---------- Editing answers on the plan page ---------- */
+
+let planEditing = null; // { step, snapshot, touched }
+
+function idsForPlan(html) {
+  // The wizard panel may hold the same fields, so the plan editor gets its own IDs.
+  return html.replace(/\b(id|for)="valid-/g, '$1="valid-plan-');
+}
+
+function openPlanEditor(index) {
+  if (planEditing) closePlanEditor({ keep: true, rerender: false });
+  const row = $(`[data-plan-step="${index}"]`);
+  if (!row) return;
+  row.insertAdjacentHTML("beforeend", `
+    <div class="valid-plan-editor" id="valid-plan-editor-${index}" role="group" aria-label="Edit ${esc(steps[index].name)}">
+      <div class="valid-fields">${idsForPlan(stepFields(index))}</div>
+      <div class="viz-row valid-plan-editor-actions">
+        <button class="btn btn-primary" type="button" data-plan-done>Update plan</button>
+        <button class="btn btn-ghost" type="button" data-plan-cancel>Cancel</button>
+      </div>
+    </div>`);
+  const editor = row.querySelector(".valid-plan-editor");
+  const fields = [...editor.querySelectorAll("[data-field]")].map((el) => el.dataset.field);
+  planEditing = {
+    step: index,
+    snapshot: Object.fromEntries(fields.map((f) => [f, state[f]])),
+    exampleContext: state.exampleContext,
+    touched: [...state.touchedFields]
+  };
+  row.classList.add("is-editing");
+  const button = row.querySelector("[data-edit-step]");
+  button.setAttribute("aria-expanded", "true");
+  button.hidden = true;
+  editor.querySelector("[data-field]")?.focus();
+}
+
+function closePlanEditor({ keep, rerender = true }) {
+  if (!planEditing) return;
+  const { step, snapshot, touched, exampleContext } = planEditing;
+  if (!keep) {
+    Object.assign(state, snapshot);
+    state.touchedFields = touched;
+    state.exampleContext = exampleContext;
+  }
+  planEditing = null;
+  if (rerender && keep) {
+    renderResults();
+    announce("Plan updated.");
+  } else {
+    const row = $(`[data-plan-step="${step}"]`);
+    row?.querySelector(".valid-plan-editor")?.remove();
+    row?.classList.remove("is-editing");
+    const button = row?.querySelector("[data-edit-step]");
+    if (button) { button.hidden = false; button.setAttribute("aria-expanded", "false"); }
+  }
+  save();
+  $(`[data-edit-step="${step}"]`)?.focus();
+}
+
+/* ---------- Canvas rubric export ---------- */
+
+function defaultRubricName() {
+  return `VALID-AI rubric: ${labels.evidenceType[state.evidenceType]}`;
+}
+
+// Canvas reads the file as UTF-8; plain punctuation avoids odd characters in older imports.
+function plainText(value) {
+  return String(value ?? "")
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, "-").replace(/\u2026/g, "...").replace(/\u00B7/g, "-")
+    .replace(/\u2192/g, "->").replace(/\u00A0/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function csvCell(value) {
+  return `"${plainText(value).replace(/"/g, '""')}"`;
+}
+
+// Format from Canvas's rubric importer (lib/rubric_csv_importer.rb in canvas-lms):
+// one row per criterion, grouped by "Rubric Name", with repeating
+// Rating Name / Rating Description / Rating Points columns.
+function canvasRubricCSV() {
+  const criteria = rubricCriteria();
+  const aiRubric = state.ai?.rubric?.length === criteria.length && !state.aiRubricHidden ? state.ai.rubric : null;
+  const total = clampPoints(state.rubricPoints);
+  const name = plainText(state.rubricName) || defaultRubricName();
+  const levels = [["Exemplary", 1], ["Proficient", 0.75], ["Developing", 0.5], ["Beginning", 0.25]];
+  const header = ["Rubric Name", "Criteria Name", "Criteria Description", "Criteria Enable Range"];
+  levels.forEach((_, i) => header.push(`Rating Name ${i + 1}`, `Rating Description ${i + 1}`, `Rating Points ${i + 1}`));
+  const rows = criteria.map((criterion, i) => {
+    const max = (criterion.weight * total) / 100;
+    const descriptions = aiRubric ? aiRubric[i] : criterion.descriptions;
+    const row = [name, criterion.name, `Weight: ${criterion.weight}% of the assessment.`, "FALSE"];
+    levels.forEach(([level, share], li) => row.push(level, descriptions[li], String(Math.round(max * share * 100) / 100)));
+    return row;
+  });
+  return `${[header, ...rows].map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
+}
+
+function downloadCanvasRubric() {
+  const name = plainText(state.rubricName) || defaultRubricName();
+  const file = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "rubric"}-canvas.csv`;
+  const url = URL.createObjectURL(new Blob([canvasRubricCSV()], { type: "text/csv;charset=utf-8" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: file });
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  $("#valid-export-status").textContent = `Downloaded ${file}.`;
 }
 
 /* ---------- Local AI ---------- */
@@ -797,6 +941,7 @@ function renderAIStatus() {
   }
   const parts = [];
   if (ai.ollamaMessage) parts.push(ai.ollamaMessage);
+  if (aiIsStale()) parts.push("<strong>You've changed answers since these AI suggestions were made.</strong> Personalize again to update them.");
   if (state.aiCleared && !state.ai) parts.push("<strong>Your answers changed, so the earlier AI suggestions were cleared.</strong> Personalize again to update them.");
   if (!ai.ready) {
     parts.push("Checking what this device can run…");
@@ -956,6 +1101,7 @@ async function runPersonalisation() {
         if (signal.aborted) break;
         result[job.key] = job.task.validate(raw);
         result.by[job.key] = engine.label;
+        result.criteriaNames = rubricCriteria().map((c) => c.name);
         result.finishedAt = Date.now();
         state.ai = { ...result, by: { ...result.by } };
         state.aiCleared = false;
@@ -1026,7 +1172,7 @@ function renderAIOutputs({ reveal } = {}) {
             </span>
           </li>`).join("")}</ul>`
       : "<p>No contradictions found between your answers.</p>";
-    $("#valid-alignment").innerHTML = `${body}<p class="text-small valid-ai-foot">Checked by ${esc(result.by?.alignment || "local AI")}. A small model can miss problems or flag non-issues, so treat this as a second reader, not a verdict.</p>`;
+    $("#valid-alignment").innerHTML = `${body}<p class="text-small valid-ai-foot">Checked by ${esc(result.by?.alignment || "local AI")}.${staleNote()} A small model can miss problems or flag non-issues, so treat this as a second reader, not a verdict.</p>`;
     alignmentSection.hidden = false;
     if (reveal === "alignment") alignmentSection.open = true;
   } else {
@@ -1038,7 +1184,7 @@ function renderAIOutputs({ reveal } = {}) {
     const i = result.instructions;
     $("#valid-instructions").innerHTML = `
       <div class="valid-ai-toolbar">
-        <p class="text-small">Draft by ${esc(result.by?.instructions || "local AI")}. Review and edit before sharing with students.</p>
+        <p class="text-small">Draft by ${esc(result.by?.instructions || "local AI")}.${staleNote()} Review and edit before sharing with students.</p>
         <button class="btn btn-ghost text-small" type="button" data-copy-instructions>Copy text</button>
       </div>
       <p>${esc(i.overview)}</p>
@@ -1117,7 +1263,6 @@ function bindEvents() {
 
   // Wizard. Listeners are delegated, so re-rendering a step never drops them,
   // and typing never triggers a re-render (the cause of the old focus bug).
-  const panel = $("#valid-panel");
   const onEdit = (control) => {
     const field = control.dataset.field;
     const previousContext = state.context;
@@ -1130,18 +1275,19 @@ function bindEvents() {
     }
     scheduleSave();
   };
-  panel.addEventListener("input", (event) => {
+  for (const container of [$("#valid-panel"), $("#valid-plan-summary")]) {
+  container.addEventListener("input", (event) => {
     if (event.target.matches("textarea[data-field]")) onEdit(event.target);
   });
-  panel.addEventListener("change", (event) => {
+  container.addEventListener("change", (event) => {
     if (event.target.matches("select[data-field]")) onEdit(event.target);
   });
-  panel.addEventListener("click", (event) => {
+  container.addEventListener("click", (event) => {
     const button = event.target.closest("[data-use-example]");
     if (!button) return;
     const field = button.dataset.useExample;
     const example = recommendedExample(field);
-    const target = panel.querySelector(`[data-field="${field}"]`);
+    const target = container.querySelector(`[data-field="${field}"]`);
     if (!target || !example) return;
     const current = target.value.trim();
     if (current && current !== example && !window.confirm("Replace what you've written with the example?")) return;
@@ -1152,6 +1298,28 @@ function bindEvents() {
     target.focus();
     scheduleSave();
   });
+  }
+
+  $("#valid-plan-summary").addEventListener("click", (event) => {
+    const edit = event.target.closest("[data-edit-step]");
+    if (edit) openPlanEditor(Number(edit.dataset.editStep));
+    else if (event.target.closest("[data-plan-done]")) closePlanEditor({ keep: true });
+    else if (event.target.closest("[data-plan-cancel]")) closePlanEditor({ keep: false });
+  });
+  $("#valid-plan-summary").addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && planEditing) closePlanEditor({ keep: false });
+  });
+
+  $("#valid-rubric-name").addEventListener("input", (event) => {
+    state.rubricName = event.target.value.slice(0, 120);
+    scheduleSave();
+  });
+  $("#valid-rubric-points").addEventListener("change", (event) => {
+    state.rubricPoints = clampPoints(event.target.value);
+    event.target.value = String(state.rubricPoints);
+    scheduleSave();
+  });
+  $("#valid-export-canvas").addEventListener("click", downloadCanvasRubric);
 
   $("#valid-step-list").addEventListener("click", (event) => {
     const button = event.target.closest("[data-go-step]");
